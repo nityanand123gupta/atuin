@@ -189,6 +189,7 @@ const LATEST_SERIALIZED_FIELDS: u32 = 13;
 /// [`LATEST_SERIALIZED_FIELDS`].
 const V2_AUTHOR_KIND_FIELD_NUMBER: u32 = 13;
 
+/// TODO(markovejnovic): This _maybe_ should use the UUID macro.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, derive_more::Display, derive_more::From)]
 #[display("{_0}")]
 pub struct HistoryId(pub String);
