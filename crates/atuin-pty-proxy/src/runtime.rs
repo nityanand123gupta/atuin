@@ -7,7 +7,6 @@ use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
 use crate::capture::CommandCaptureTracker;
 use crate::debug::{Osc133DebugHighlighter, RESET};
-use crate::ipc::{IpcController, IpcServer};
 use crate::pty_proxy::RuntimeOptions;
 use crate::screen::{self, Msg};
 
@@ -63,11 +62,6 @@ fn run(options: RuntimeOptions) -> eyre::Result<()> {
     } else {
         cmd.env_remove("ATUIN_PTY_PROXY_SOCKET");
     }
-    // Legacy PTY proxy versions didn't have a mechanism to announce the version over the protocol,
-    // so passing the environment variable here is a relatively good idea.
-    //
-    // TODO(markovejnovic): Remove this, at some point.
-    cmd.env("ATUIN_PTY_PROXY_PROTOCOL", crate::ipc::domain::PROTOCOL_VERSION.to_string());
     cmd.env("ATUIN_PTY_PROXY_ACTIVE", "1");
     // Atuin sets a restrictive process-wide umask on startup to protect the
     // files it creates. The shell must not inherit it (#3695) — restore the
@@ -88,15 +82,9 @@ fn run(options: RuntimeOptions) -> eyre::Result<()> {
     let current_cols = Arc::new(AtomicU16::new(cols.max(1)));
 
     screen::spawn_parser_thread(rows, cols, msg_rx);
-    let _ipc_server = sock_path.as_ref().and_then(|path| {
-        match IpcServer::spawn(path, IpcController::new(msg_tx.clone())) {
-            Ok(server) => Some(server),
-            Err(e) => {
-                eprintln!("atuin pty-proxy: failed to start screen server: {e}");
-                None
-            }
-        }
-    });
+    if let Some(path) = &sock_path {
+        screen::spawn_socket_server(path.clone(), msg_tx.clone());
+    }
     spawn_resize_handler(pair.master, msg_tx.clone(), current_cols.clone())?;
 
     terminal::enable_raw_mode()?;
@@ -199,4 +187,20 @@ fn spawn_resize_handler(
 
 fn process_exit_code(code: u32) -> i32 {
     i32::try_from(code).unwrap_or(1)
+}
+
+#[cfg(test)]
+mod tests {
+    use rstest::rstest;
+
+    use super::process_exit_code;
+
+    #[rstest]
+    #[case::zero(0, 0)]
+    #[case::mid_range(127, 127)]
+    #[case::max_i32(i32::MAX as u32, i32::MAX)]
+    #[case::overflow_defaults_to_one(i32::MAX as u32 + 1, 1)]
+    fn maps_exit_code(#[case] input: u32, #[case] expected: i32) {
+        assert_eq!(process_exit_code(input), expected);
+    }
 }
